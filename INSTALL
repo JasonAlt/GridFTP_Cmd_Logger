@@ -1,0 +1,39 @@
+PURPOSE
+-------
+This module catches all communication on the GridFTP control channel and logs it
+to a file. If the GridFTP process exits cleanly, the log file is automatically
+deleted. Otherwise, the GridFTP process is left for inspection by an administrator
+or developer. This is very useful for debugging user issues.
+
+OVERVIEW
+--------
+Just build the library, LD_PRELOAD it into the GridFTP server process and set the
+environment variable CMD_LOGGER_LOGFILE to point to where you want the control
+channel logged.
+
+BUILD
+-----
+In order to build this library, the compiler will need access to internal Globus headers.
+You must install the RPM globus-gridftp-server-control-debuginfo prior to building this
+module. After that, just typin make should suffice.
+
+INSTALLATION
+------------
+Put the library in a location accessible to the GridFTP server. For example, install it
+into /usr/local/lib64/.
+
+CONFIGURATION
+-------------
+LD_PRELOAD the library into the GridFTP process. If you launch GridFTP from xinetd:
+
+  env += LD_PRELOAD=/usr/local/lib64/libcmd_logger.so
+
+Set the environment variable that tells the GridFTP process where to place the logfiles:
+
+  env += CMD_LOGGER_LOGFILE=/var/log/gridftp_logs/logfile
+
+The library will automatically append the process's PID to the end of the logfile name 
+in order to keep them unique. The directory must be writeable by the UID used to launch
+the GridFTP process. For most installations, this will be the root user.
+
+Good Luck!

@@ -1,0 +1,2 @@
+Revision 771
+	Added a destructor to the library to handle removing log files
