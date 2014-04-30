@@ -49,7 +49,8 @@
 #include <globus_i_gridftp_server_control.h>
 
 
-#define ENV_LOGFILE_VAR "CMD_LOGGER_LOGFILE"
+#define ENV_LOGFILE_VAR  "CMD_LOGGER_LOGFILE"
+#define ENV_LOGFILE_KEEP "CMD_LOGGER_KEEP_LOG"
 
 static void (*_real_globus_l_gsc_read_cb)(globus_xio_handle_t            xio_handle,
                                           globus_result_t                result,
@@ -68,6 +69,9 @@ void __cleanup(void) __attribute__((destructor));
 
 void __cleanup()
 {
+	if (getenv(ENV_LOGFILE_KEEP))
+		return;
+
 	if (_cmd_logger_initialized && _path_to_logfile[0] != '\0')
 		unlink(_path_to_logfile);
 }

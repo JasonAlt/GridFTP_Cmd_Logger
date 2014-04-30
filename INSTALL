@@ -36,4 +36,7 @@ The library will automatically append the process's PID to the end of the logfil
 in order to keep them unique. The directory must be writeable by the UID used to launch
 the GridFTP process. For most installations, this will be the root user.
 
+If you set the environment variable CMD_LOGGER_KEEP_LOG, the GridFTP process will not
+remove the log file on exit, even on success. This is useful for debugging connections.
+
 Good Luck!

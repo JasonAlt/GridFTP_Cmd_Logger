@@ -1,2 +1,6 @@
-Revision 1.0
+Revision 817
+	Added env variable ENV_LOGFILE_KEEP. If set, the log file is not
+	removed on exit.
+
+Revision 771
 	Added a destructor to the library to handle removing log files
