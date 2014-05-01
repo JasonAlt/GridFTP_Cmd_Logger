@@ -44,6 +44,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 #include <globus_gridftp_server.h>
 #include <globus_i_gridftp_server_control.h>
@@ -318,3 +320,68 @@ globus_xio_register_write(
 	                                       user_arg);
 }
 
+int
+setuid(uid_t Uid)
+{
+	void * module = NULL;
+	int    retval = 0;
+
+	static int (*_real_setuid) (uid_t Uid) = NULL;
+
+	if (_real_setuid == NULL)
+	{
+		module = dlopen("libc.so.6", RTLD_LAZY|RTLD_LOCAL);
+
+		if (!module)
+			exit(1);
+
+		/* Clear any previous error. */
+		dlerror();
+
+		_real_setuid = dlsym(module, "setuid");
+		if (dlerror())
+			exit(1);
+	}
+
+	/*
+	 * Change the owner of our log file, this will allow us to delete it later if
+	 * the directory is sticky.
+	 */
+	if (_logfile_fp)
+		fchown(fileno(_logfile_fp), Uid, -1);
+
+	return _real_setuid(Uid);
+}
+
+int
+setgid(gid_t Gid)
+{
+	void * module = NULL;
+	int    retval = 0;
+
+	static int (*_real_setgid) (gid_t Gid) = NULL;
+
+	if (_real_setgid == NULL)
+	{
+		module = dlopen("libc.so.6", RTLD_LAZY|RTLD_LOCAL);
+
+		if (!module)
+			exit(1);
+
+		/* Clear any previous error. */
+		dlerror();
+
+		_real_setgid = dlsym(module, "setgid");
+		if (dlerror())
+			exit(1);
+	}
+
+	/*
+	 * Change the owner of our log file, this will allow us to delete it later if
+	 * the directory is sticky.
+	 */
+	if (_logfile_fp)
+		fchown(fileno(_logfile_fp), -1, Gid);
+
+	return _real_setgid(Gid);
+}

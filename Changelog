@@ -1,3 +1,8 @@
+Revision 818
+	Catch setuid() and setgid() and change the log file's owner/group
+	so that the log file can be removed later. Requires that the log
+	file directory is sticky.
+
 Revision 817
 	Added env variable ENV_LOGFILE_KEEP. If set, the log file is not
 	removed on exit.

@@ -39,4 +39,8 @@ the GridFTP process. For most installations, this will be the root user.
 If you set the environment variable CMD_LOGGER_KEEP_LOG, the GridFTP process will not
 remove the log file on exit, even on success. This is useful for debugging connections.
 
+If the GridFTP process changes owner/group, the library will catch setuid(), setgid()
+and change the log file's permissions as well. This allows the file to be later removed
+on successful exit. And it requires that the log file directory is sticky.
+
 Good Luck!
