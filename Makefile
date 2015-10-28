@@ -1,6 +1,7 @@
 GLOBUS_LOCATION=/usr
 
-GLOBUS_INTERNAL_INCLUDES=-I/usr/src/debug/globus_gridftp_server_control-2.10
+#GLOBUS_INTERNAL_INCLUDES=-I/usr/src/debug/globus_gridftp_server_control-2.10
+GLOBUS_INTERNAL_INCLUDES=-I/usr/src/debug/globus_gridftp_server_control-3.7/
 GLOBUS_INCLUDES=-I/usr/include/globus -I/usr/lib64/globus/include
 
 INCLUDES=$(GLOBUS_INTERNAL_INCLUDES) $(GLOBUS_INCLUDES)

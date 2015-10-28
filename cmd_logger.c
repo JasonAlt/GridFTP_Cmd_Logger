@@ -54,6 +54,49 @@
 #define ENV_LOGFILE_VAR  "CMD_LOGGER_LOGFILE"
 #define ENV_LOGFILE_KEEP "CMD_LOGGER_KEEP_LOG"
 
+void __cleanup(void) __attribute__((destructor)); 
+
+typedef struct
+{
+    gss_cred_id_t                       cred;
+    char *                              sbj;
+    char *                              username;
+    char *                              pw;
+} gfs_l_file_session_t;
+
+#ifdef EOF_DEBUG
+typedef struct
+{
+    globus_mutex_t                      lock;
+    globus_memory_t                     mem;
+    globus_priority_q_t                 queue;
+    globus_list_t *                     buffer_list;
+    globus_gfs_operation_t              op;
+    char *                              pathname;
+    globus_xio_handle_t                 file_handle;
+    globus_off_t                        file_offset;
+    globus_off_t                        read_offset;
+    globus_off_t                        read_length;
+    int                                 pending_writes;
+    int                                 pending_reads;
+    globus_size_t                       block_size;
+    int                                 optimal_count;
+    int                                 node_ndx;
+    globus_object_t *                   error;
+    globus_bool_t                       first_read;
+    globus_bool_t                       eof;
+    globus_bool_t                       aborted;
+    int                                 concurrency_check;
+    int                                 concurrency_check_interval;
+    char *                              expected_cksm;
+    char *                              expected_cksm_alg;
+    /* added for multicast stuff, but cold be genreally useful */
+    gfs_l_file_session_t *              session;
+
+    globus_result_t                     finish_result;
+} globus_l_file_monitor_t;
+#endif /* EOF_DEBUG */
+
 static void (*_real_globus_l_gsc_read_cb)(globus_xio_handle_t            xio_handle,
                                           globus_result_t                result,
                                           globus_byte_t                * buffer,
@@ -66,8 +109,9 @@ static globus_xio_handle_t _real_xio_handle = NULL;
 static int    _cmd_logger_initialized = 0;
 static FILE * _logfile_fp = NULL;
 static char   _path_to_logfile[MAXPATHLEN];
-
-void __cleanup(void) __attribute__((destructor)); 
+#ifdef EOF_DEBUG
+static globus_l_file_monitor_t * file_monitor = NULL;
+#endif /* EOF_DEBUG */
 
 void __cleanup()
 {
@@ -161,6 +205,168 @@ _fake_globus_l_gsc_read_cb(globus_xio_handle_t            xio_handle,
 	/* Call the real function. */
 	_real_globus_l_gsc_read_cb(xio_handle, result, buffer, len, nbytes, data_desc, user_arg);
 }
+
+struct read_callback_args {
+	globus_gridftp_server_read_cb_t   callback;
+	void                            * arg;
+};
+
+#ifdef EOF_DEBUG
+static void
+_register_read_callback(globus_gfs_operation_t  op,
+                        globus_result_t         result,
+                        globus_byte_t *         buffer,
+                        globus_size_t           nbytes,
+                        globus_off_t            offset,
+                        globus_bool_t           eof,
+                        void                  * user_arg)
+{
+	struct read_callback_args * args = user_arg;
+
+	if (_logfile_fp)
+	{
+		globus_mutex_lock(&file_monitor->lock);
+		{
+			fprintf(_logfile_fp, "GridFTP read Callback\n");
+			fprintf(_logfile_fp, "\tPending writes: %d\n", file_monitor->pending_writes);
+			fprintf(_logfile_fp, "\tPending reads: %d\n", file_monitor->pending_reads-1);
+			fprintf(_logfile_fp, "\tEof: %s\n", (eof) ? "Yes": "No");
+			fprintf(_logfile_fp, "\tError: %s\n", (result || file_monitor->finish_result) ? "Yes": "No");
+			fflush(_logfile_fp);
+		}
+		globus_mutex_unlock(&file_monitor->lock);
+	}
+
+	args->callback(op, result, buffer, nbytes, offset, eof, args->arg);
+	free(user_arg);
+}
+
+
+globus_result_t
+globus_gridftp_server_register_read(
+    globus_gfs_operation_t              op,
+    globus_byte_t *                     buffer,
+    globus_size_t                       length,
+    globus_gridftp_server_read_cb_t     callback,
+    void *                              user_arg)
+{
+	void * module = NULL;
+	static globus_result_t (*_real_globus_gridftp_server_register_read)(
+	                              globus_gfs_operation_t              op,
+                                  globus_byte_t *                     buffer,
+                                  globus_size_t                       length,
+                                  globus_gridftp_server_read_cb_t     callback,
+                                  void *                              user_arg) = NULL;
+
+	_init_cmd_logger();
+
+	if (_real_globus_gridftp_server_register_read == NULL)
+	{
+		module = dlopen("libglobus_gridftp_server.so.6", RTLD_LAZY|RTLD_LOCAL);
+
+		if (!module)
+			exit(1);
+
+		/* Clear any previous error. */
+		dlerror();
+
+		_real_globus_gridftp_server_register_read = dlsym(module, "globus_gridftp_server_register_read");
+		if (dlerror())
+			exit(1);
+	}
+
+	if (!file_monitor)
+		file_monitor = user_arg;
+
+	if (_logfile_fp)
+	{
+		fprintf(_logfile_fp, "Registering GridFTP read\n");
+		fprintf(_logfile_fp, "\tPending writes: %d\n", file_monitor->pending_writes);
+		fprintf(_logfile_fp, "\tPending reads: %d\n", file_monitor->pending_reads+1);
+		fprintf(_logfile_fp, "\tEof: %s\n", (file_monitor->eof) ? "Yes": "No");
+		fprintf(_logfile_fp, "\tError: %s\n", (file_monitor->finish_result) ? "Yes": "No");
+		fflush(_logfile_fp);
+	}
+
+	struct read_callback_args * args = malloc(sizeof(struct read_callback_args));
+	args->callback = callback;
+	args->arg      = user_arg;
+
+	return _real_globus_gridftp_server_register_read(op, buffer, length, _register_read_callback, args);
+}
+
+struct close_callback_args {
+    globus_xio_callback_t   cb;
+    void                  * user_arg;
+};
+
+static void
+_xio_register_close_cb(globus_xio_handle_t   handle,
+                       globus_result_t       result,
+                       void                * user_arg)
+{
+	struct close_callback_args * args = user_arg;
+
+	if (_logfile_fp)
+	{
+		if (result)
+			fprintf(_logfile_fp, "Error in close callback\n");
+		else
+			fprintf(_logfile_fp, "Close callback completed\n");
+		fflush(_logfile_fp);
+	}
+	file_monitor = NULL;
+
+	args->cb(handle, result, args->user_arg);
+	free(user_arg);
+}
+
+globus_result_t
+globus_xio_register_close(
+    globus_xio_handle_t                 handle,
+    globus_xio_attr_t                   attr,
+    globus_xio_callback_t               cb,
+    void *                              user_arg)
+{
+	void * module = NULL;
+	static globus_result_t (*_real_globus_xio_register_close)(globus_xio_handle_t     handle,
+	                                                          globus_xio_attr_t       attr,
+	                                                          globus_xio_callback_t   cb,
+	                                                          void                  * user_arg);
+
+	_init_cmd_logger();
+
+	if (_real_globus_xio_register_close == NULL)
+	{
+		module = dlopen("libglobus_xio.so.0", RTLD_LAZY|RTLD_LOCAL);
+
+		if (!module)
+			exit(1);
+
+		/* Clear any previous error. */
+		dlerror();
+
+		_real_globus_xio_register_close = dlsym(module, "globus_xio_register_close");
+		if (dlerror())
+			exit(1);
+	}
+
+	/* Ignore non-file closing calls. */
+	if (!file_monitor || file_monitor->file_handle != handle)
+		return _real_globus_xio_register_close(handle, attr, cb, user_arg);
+
+	if (_logfile_fp)
+	{
+		fprintf(_logfile_fp, "Registering close \n");
+		fflush(_logfile_fp);
+	}
+
+	struct close_callback_args * args = malloc(sizeof(struct close_callback_args));
+	args->cb = cb;
+	args->user_arg = user_arg;
+	return _real_globus_xio_register_close(handle, attr, _xio_register_close_cb, args);
+}
+#endif /* EOF_DEBUG */
 
 /*
  * Catch this function so that we can get the value of the xio handle.
@@ -271,6 +477,44 @@ globus_xio_register_read(globus_xio_handle_t            handle,
 
 }
 
+#ifdef EOF_DEBUG
+struct xio_register_write_cb {
+    globus_xio_data_callback_t   cb;
+	void                       * user_arg;
+};
+
+static void
+_xio_register_write_cb(
+    globus_xio_handle_t                 xio_handle,
+    globus_result_t                     result,
+    globus_byte_t *                     buffer,
+    globus_size_t                       len,
+    globus_size_t                       nbytes,
+    globus_xio_data_descriptor_t        data_desc,
+    void *                              user_arg)
+{
+	struct xio_register_write_cb * args = user_arg;
+	globus_l_file_monitor_t * file_monitor = args->user_arg;
+
+	if (_logfile_fp)
+	{
+		globus_mutex_lock(&file_monitor->lock);
+		{
+			fprintf(_logfile_fp, "Buffer written to file\n");
+			fprintf(_logfile_fp, "\tPending writes: %d\n", file_monitor->pending_writes-1);
+			fprintf(_logfile_fp, "\tPending reads: %d\n", file_monitor->pending_reads);
+			fprintf(_logfile_fp, "\tEof: %s\n", (file_monitor->eof) ? "Yes": "No");
+			fprintf(_logfile_fp, "\tError: %s\n", (result || file_monitor->finish_result) ? "Yes": "No");
+			fflush(_logfile_fp);
+		}
+		globus_mutex_unlock(&file_monitor->lock);
+	}
+
+	return args->cb(xio_handle, result, buffer, len, nbytes, data_desc, args->user_arg);
+	free(args);
+}
+#endif /* EOF_DEBUG */
+
 globus_result_t
 globus_xio_register_write(
     globus_xio_handle_t                 user_handle,
@@ -311,13 +555,29 @@ globus_xio_register_write(
 	if (user_handle == _real_xio_handle)
 		_outgoing_reply_hook(buffer, buffer_length);
 
+#ifdef EOF_DEBUG
+	if (!file_monitor || file_monitor->file_handle != user_handle)
+#endif /* EOF_DEBUG */
+		return _real_globus_xio_register_write(user_handle,
+		                                       buffer,
+		                                       buffer_length,
+		                                       waitforbytes,
+		                                       data_desc,
+		                                       cb,
+		                                       user_arg);
+
+#ifdef EOF_DEBUG
+	struct xio_register_write_cb * args = malloc(sizeof(struct xio_register_write_cb));
+	args->cb = cb;
+	args->user_arg = user_arg;
 	return _real_globus_xio_register_write(user_handle,
 	                                       buffer,
 	                                       buffer_length,
 	                                       waitforbytes,
 	                                       data_desc,
-	                                       cb,
-	                                       user_arg);
+	                                       _xio_register_write_cb,
+	                                       args);
+#endif /* EOF_DEBUG */
 }
 
 int
