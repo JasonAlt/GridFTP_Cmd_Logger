@@ -1,3 +1,7 @@
+Wed Oct 28 14:34:55 CDT 2015
+	Added EOF_DEBUG for sending debug information regarding EOF counts
+	and file closing post STOR.
+
 Revision 818
 	Catch setuid() and setgid() and change the log file's owner/group
 	so that the log file can be removed later. Requires that the log
